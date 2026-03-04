@@ -2,7 +2,7 @@
 
 # 钓鱼佬的工具箱 - SillyTavern Termux 管理脚本
 # 作者: 10091009mc
-# 版本: v1.3.5
+# 版本: v1.3.5 (Modified by weiranxinyu)
 
 # 颜色定义
 GREEN='\033[0;32m'
@@ -19,7 +19,7 @@ ST_DIR="$HOME/SillyTavern"
 REPO_URL="https://github.com/SillyTavern/SillyTavern.git"
 BACKUP_DIR="/storage/emulated/0/ST/"  # 修改为外部存储路径
 SCRIPT_VERSION="v1.3.5"
-SCRIPT_URL="https://raw.githubusercontent.com/mc10091009/st_manager.sh/main/angler_toolbox.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/weiranxinyu/st_manager.sh/main/angler_toolbox.sh"
 TAG_DISPLAY_LIMIT=10
 
 # 防止使用 source 或 . 运行脚本
@@ -111,7 +111,7 @@ function init_environment() {
     print_info "正在检查环境依赖..."
 
     # 检查必要命令是否存在
-    DEPENDENCIES=("curl" "git" "node" "python" "tar" "jq" "lsof" "fuser" "pgrep")
+    DEPENDENCIES=("curl" "git" "node" "python" "zip" "unzip" "jq" "lsof" "fuser" "pgrep")
     MISSING_DEPS=()
 
     for dep in "${DEPENDENCIES[@]}"; do
@@ -128,9 +128,9 @@ function init_environment() {
         print_info "正在更新 Termux 包 (pkg upgrade)..."
         yes | pkg upgrade
 
-        # 安装依赖
+        # 安装依赖（添加 zip 和 unzip）
         print_info "正在安装缺失依赖..."
-        pkg update && pkg install curl git nodejs python build-essential tar jq lsof psmisc procps -y
+        pkg update && pkg install curl git nodejs python build-essential zip unzip jq lsof psmisc procps -y
 
         print_info "依赖安装完成！"
     else
@@ -159,7 +159,7 @@ function init_environment() {
     sleep 1
 }
 
-# 备份数据
+# 备份数据（修改为 zip 格式）
 function backup_data() {
     if [ ! -d "$ST_DIR" ]; then
         print_error "SillyTavern 未安装，无法备份。"
@@ -176,7 +176,7 @@ function backup_data() {
     fi
 
     TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    BACKUP_FILE="$BACKUP_DIR/st_backup_$TIMESTAMP.tar.gz"
+    BACKUP_FILE="$BACKUP_DIR/st_backup_$TIMESTAMP.zip"
 
     print_info "正在备份关键数据 (data, config.yaml, 插件)..."
 
@@ -201,15 +201,15 @@ function backup_data() {
         BACKUP_ITEMS="$BACKUP_ITEMS public/scripts/extensions/third-party"
     fi
 
-    # 打包
-    if tar -czf "$BACKUP_FILE" $BACKUP_ITEMS 2>/dev/null; then
+    # 使用 zip 命令打包（-r 递归，-q 安静模式）
+    if zip -rq "$BACKUP_FILE" $BACKUP_ITEMS 2>/dev/null; then
         print_info "备份成功！文件已保存至: $BACKUP_FILE"
     else
         print_error "备份失败！"
     fi
 }
 
-# 恢复数据
+# 恢复数据（修改为 zip 格式）
 function restore_data() {
     if [ ! -d "$ST_DIR" ]; then
         print_error "SillyTavern 未安装，请先安装。"
@@ -220,12 +220,12 @@ function restore_data() {
 
     # 启用 nullglob 以处理没有匹配文件的情况
     shopt -s nullglob
-    # 搜索备份目录下的压缩包
-    local files=("$BACKUP_DIR"/*.tar.gz "$BACKUP_DIR"/*.tgz)
+    # 搜索备份目录下的 zip 文件
+    local files=("$BACKUP_DIR"/*.zip)
     shopt -u nullglob
 
     if [ ${#files[@]} -eq 0 ]; then
-        print_error "未找到备份文件 (.tar.gz, .tgz)。"
+        print_error "未找到备份文件 (.zip)。"
         print_info "请将备份文件放入 $BACKUP_DIR 目录。"
         return
     fi
@@ -259,7 +259,8 @@ function restore_data() {
     # 确保进入 ST 目录
     cd "$ST_DIR" || exit
 
-    if tar -xzf "$selected_file"; then
+    # 使用 unzip 命令解压（-o 覆盖，-q 安静模式）
+    if unzip -oq "$selected_file"; then
         print_info "恢复成功！"
         print_info "建议重启 SillyTavern 以应用更改。"
     else
@@ -741,7 +742,7 @@ function check_port() {
             # 再次检查
             local still_occupied=0
             if (command -v lsof >/dev/null && lsof -i :$port > /dev/null 2>&1); then still_occupied=1; fi
-            if (command -v netstat >/dev/null && netstat -nlp | grep -q -E ":$port[[:space:]]"); then still_occupied=1; fi
+            if (command -v netstat >/stat >/dev/null && netstat -nlp | grep -q -E ":$port[[:space:]]"); then still_occupied=1; fi
             if (command -v pgrep >/dev/null && pgrep -f "server.js" >/dev/null); then still_occupied=1; fi
 
             if [ $still_occupied -eq 1 ]; then
@@ -1275,7 +1276,7 @@ function main_menu() {
         echo -e "${CYAN}====================================================${NC}"
         echo -e "${BOLD}${PURPLE}     🎣 钓鱼佬的工具箱 (Angler's Toolbox)     ${NC} ${YELLOW}${SCRIPT_VERSION}${NC}"
         echo -e "${CYAN}====================================================${NC}"
-        echo -e "${BLUE}  作者: 10091009mc${NC}"
+        echo -e "${BLUE}  作者: 10091009mc (Modified by weiranxinyu)${NC}"
         echo -e "${BLUE}  Foxium 工具箱 作者: FoX | 𝓚𝓚𝓣𝓼𝓝(橘狐)${NC}"
         echo -e "${RED}  ⚠️ 警告: 不要买任何贩子的模型API，都是骗人的！${NC}"
         echo -e "${RED}  ⚠️ 声明: 本脚本完全免费，禁止商业化使用！${NC}"
