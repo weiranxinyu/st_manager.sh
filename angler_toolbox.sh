@@ -17,7 +17,7 @@ NC='\033[0m' # No Color
 # 默认安装目录
 ST_DIR="$HOME/SillyTavern"
 REPO_URL="https://github.com/SillyTavern/SillyTavern.git"
-BACKUP_DIR="$HOME/st_backups"
+BACKUP_DIR="/storage/emulated/0/ST/"  # 修改为外部存储路径
 SCRIPT_VERSION="v1.3.5"
 SCRIPT_URL="https://raw.githubusercontent.com/mc10091009/st_manager.sh/main/angler_toolbox.sh"
 TAG_DISPLAY_LIMIT=10
@@ -44,7 +44,6 @@ function print_error() {
     echo -e "${RED}[ERROR] $1${NC}"
 }
 
-
 function show_tag_overview() {
     local tags=("$@")
     local tag_count=${#tags[@]}
@@ -62,7 +61,7 @@ function show_tag_overview() {
 
     echo -e "${YELLOW}最近的 $limit 个版本:${NC}"
     for ((i = 0; i < limit; i++)); do
-        printf " %2d. %s\n" $((i + 1)) "${tags[$i]}"
+        printf "  %2d. %s\n" $((i + 1)) "${tags[$i]}"
     done
 }
 
@@ -110,34 +109,34 @@ function prompt_tag_selection() {
 # 初始化环境检查
 function init_environment() {
     print_info "正在检查环境依赖..."
-    
+
     # 检查必要命令是否存在
     DEPENDENCIES=("curl" "git" "node" "python" "tar" "jq" "lsof" "fuser" "pgrep")
     MISSING_DEPS=()
-    
+
     for dep in "${DEPENDENCIES[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
             MISSING_DEPS+=("$dep")
         fi
     done
-    
+
     # 如果有缺失的依赖，则进行安装
     if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
         print_warn "发现缺失依赖: ${MISSING_DEPS[*]}，正在安装..."
-        
+
         # 更新 Termux 包
         print_info "正在更新 Termux 包 (pkg upgrade)..."
         yes | pkg upgrade
-        
+
         # 安装依赖
         print_info "正在安装缺失依赖..."
         pkg update && pkg install curl git nodejs python build-essential tar jq lsof psmisc procps -y
-        
+
         print_info "依赖安装完成！"
     else
         print_info "所有依赖已安装，跳过环境初始化。"
     fi
-    
+
     # 验证 Node.js 版本
     if command -v node &> /dev/null; then
         NODE_VERSION=$(node -v)
@@ -146,7 +145,17 @@ function init_environment() {
         print_error "Node.js 安装失败，请尝试手动安装: pkg install nodejs"
         exit 1
     fi
-    
+
+    # 创建备份目录（如果不存在）
+    if [ ! -d "$BACKUP_DIR" ]; then
+        print_info "正在创建备份目录: $BACKUP_DIR"
+        mkdir -p "$BACKUP_DIR"
+        if [ $? -ne 0 ]; then
+            print_error "无法创建备份目录，请检查存储权限！"
+            print_warn "请确保已授予 Termux 存储权限: termux-setup-storage"
+        fi
+    fi
+
     sleep 1
 }
 
@@ -157,18 +166,26 @@ function backup_data() {
         return
     fi
 
-    mkdir -p "$BACKUP_DIR"
+    # 确保备份目录存在
+    if [ ! -d "$BACKUP_DIR" ]; then
+        mkdir -p "$BACKUP_DIR"
+        if [ $? -ne 0 ]; then
+            print_error "无法创建备份目录: $BACKUP_DIR"
+            return
+        fi
+    fi
+
     TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
     BACKUP_FILE="$BACKUP_DIR/st_backup_$TIMESTAMP.tar.gz"
 
     print_info "正在备份关键数据 (data, config.yaml, 插件)..."
-    
+
     # 进入 ST 目录进行打包，避免包含绝对路径
     cd "$ST_DIR" || exit
-    
+
     # 准备备份列表
     BACKUP_ITEMS="data"
-    
+
     # 检查是否存在 config.yaml
     if [ -f "config.yaml" ]; then
         BACKUP_ITEMS="$BACKUP_ITEMS config.yaml"
@@ -200,35 +217,35 @@ function restore_data() {
     fi
 
     print_info "正在搜索备份文件..."
-    
+
     # 启用 nullglob 以处理没有匹配文件的情况
     shopt -s nullglob
-    # 搜索 HOME 目录和备份目录下的压缩包
-    local files=("$HOME"/*.tar.gz "$HOME"/*.tgz "$BACKUP_DIR"/*.tar.gz "$BACKUP_DIR"/*.tgz)
+    # 搜索备份目录下的压缩包
+    local files=("$BACKUP_DIR"/*.tar.gz "$BACKUP_DIR"/*.tgz)
     shopt -u nullglob
 
     if [ ${#files[@]} -eq 0 ]; then
         print_error "未找到备份文件 (.tar.gz, .tgz)。"
-        print_info "请将备份文件放入 $HOME 目录或 $BACKUP_DIR 目录。"
+        print_info "请将备份文件放入 $BACKUP_DIR 目录。"
         return
     fi
 
     echo "请选择要恢复的备份文件:"
     local i=1
     for f in "${files[@]}"; do
-        echo "$i. $(basename "$f")  [$(dirname "$f")]"
+        echo "$i. $(basename "$f") [$(dirname "$f")]"
         ((i++))
     done
 
     read -p "请输入序号 (1-${#files[@]}): " choice
-    
+
     if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#files[@]}" ]; then
         print_error "无效的选择。"
         return
     fi
 
     local selected_file="${files[$((choice-1))]}"
-    
+
     print_warn "即将从 $(basename "$selected_file") 恢复数据。"
     print_warn "这将覆盖当前的 data, config.yaml 等文件！"
     read -p "确认继续吗? (y/n): " confirm
@@ -238,10 +255,10 @@ function restore_data() {
     fi
 
     print_info "正在恢复..."
-    
+
     # 确保进入 ST 目录
     cd "$ST_DIR" || exit
-    
+
     if tar -xzf "$selected_file"; then
         print_info "恢复成功！"
         print_info "建议重启 SillyTavern 以应用更改。"
@@ -255,16 +272,16 @@ function backup_restore_menu() {
     while true; do
         clear
         echo -e "${GREEN}=========================================${NC}"
-        echo -e "${GREEN}         备份与恢复 (Backup & Restore)    ${NC}"
+        echo -e "${GREEN}     备份与恢复 (Backup & Restore)       ${NC}"
         echo -e "${GREEN}=========================================${NC}"
         echo "1. 备份数据 (Backup Data)"
-        echo "   - 将 data, config.yaml 等关键文件打包备份到 $BACKUP_DIR"
+        echo " - 将 data, config.yaml 等关键文件打包备份到 $BACKUP_DIR"
         echo "2. 恢复数据 (Restore Data)"
-        echo "   - 从 $HOME 或 $BACKUP_DIR 目录下的压缩包还原数据"
+        echo " - 从 $BACKUP_DIR 目录下的压缩包还原数据"
         echo "3. 返回上一级 (Return)"
         echo ""
         read -p "请输入选项 [1-3]: " choice
-        
+
         case $choice in
             1) backup_data; read -p "按回车键继续..." ;;
             2) restore_data; read -p "按回车键继续..." ;;
@@ -493,13 +510,13 @@ function rollback_st() {
         print_error "SillyTavern 未安装，请先安装。"
         return
     fi
-    
+
     ask_backup
 
     cd "$ST_DIR" || exit
     print_info "正在获取版本记录..."
     git fetch --all
-    
+
     echo "1. 按 Commit Hash 回退"
     echo "2. 按版本号 (Tag) 切换 (推荐)"
     echo -e "${GREEN}推荐使用按版本号 (Tag) 切换版本${NC}"
@@ -519,7 +536,7 @@ function rollback_st() {
         read -p "请输入 Commit Hash (例如 a1b2c3d): " target
         if [ -z "$target" ]; then print_error "输入为空"; return; fi
     fi
-    
+
     print_info "正在切换到 $target ..."
     if git reset --hard "$target"; then
         print_info "切换成功！正在重新安装依赖..."
@@ -631,7 +648,7 @@ function reinstall_dependencies() {
         print_error "SillyTavern 未安装，请先安装。"
         return
     fi
-    
+
     print_warn "此操作将重新下载并安装 SillyTavern 的运行依赖 (node_modules)。"
     print_warn "如果之前的安装失败或启动报错，可以尝试此操作。"
     read -p "确认继续吗? (y/n): " confirm
@@ -641,12 +658,12 @@ function reinstall_dependencies() {
     fi
 
     cd "$ST_DIR" || exit
-    
+
     if [ -d "node_modules" ]; then
         print_info "正在清理旧的依赖文件..."
         rm -rf node_modules
     fi
-    
+
     print_info "正在执行 npm install (这可能需要几分钟)..."
     if npm install; then
         print_info "依赖重新安装成功！"
@@ -661,7 +678,7 @@ function check_port() {
     # 检查端口是否被占用
     # 尝试多种方式获取 PID，以兼容不同环境
     local pids=""
-    
+
     # 方法 0: fuser (通常很可靠，需要 psmisc)
     if command -v fuser &> /dev/null; then
         pids=$(fuser $port/tcp 2>/dev/null)
@@ -671,7 +688,7 @@ function check_port() {
     if [ -z "$pids" ] && command -v lsof &> /dev/null; then
         pids=$(lsof -t -i :$port 2>/dev/null)
     fi
-    
+
     # 方法 2: netstat (如果 lsof 没找到或者没装)
     if [ -z "$pids" ] && command -v netstat &> /dev/null; then
         # netstat -nlp | grep :8000
@@ -684,16 +701,16 @@ function check_port() {
         # ss -lptn 'sport = :8000'
         pids=$(ss -lptn "sport = :$port" 2>/dev/null | grep "pid=" | sed 's/.*pid=\([0-9]*\).*/\1/' | sort -u)
     fi
-    
+
     # 方法 4: 进程名匹配 (兜底方案)
     # 如果端口检查都失败了，但用户认为有占用，检查是否有 server.js 在运行
     if [ -z "$pids" ]; then
         if command -v pgrep &> /dev/null; then
             local node_pids=$(pgrep -f "server.js")
             if [ -n "$node_pids" ]; then
-                 print_warn "未直接检测到端口 $port 占用，但发现正在运行的 'server.js' 进程。"
-                 print_warn "这可能是 SillyTavern 进程。"
-                 pids="$node_pids"
+                print_warn "未直接检测到端口 $port 占用，但发现正在运行的 'server.js' 进程。"
+                print_warn "这可能是 SillyTavern 进程。"
+                pids="$node_pids"
             fi
         fi
     fi
@@ -701,17 +718,17 @@ function check_port() {
     if [ -n "$pids" ]; then
         # 规范化 PID 列表 (将换行符转为空格)
         pids=$(echo "$pids" | tr '\n' ' ' | xargs)
-        
+
         print_warn "检测到可能占用端口或相关的进程。"
         echo -e "${YELLOW}进程 PID: $pids${NC}"
-        
+
         # 尝试显示详细信息
         if command -v lsof &> /dev/null; then
             lsof -i :$port 2>/dev/null
         elif command -v netstat &> /dev/null; then
             netstat -nlp 2>/dev/null | grep -E ":$port[[:space:]]"
         fi
-        
+
         read -p "是否尝试终止这些进程以释放端口? (y/n): " choice
         if [[ "$choice" == "y" || "$choice" == "Y" ]]; then
             for pid in $pids; do
@@ -728,8 +745,8 @@ function check_port() {
             if (command -v pgrep >/dev/null && pgrep -f "server.js" >/dev/null); then still_occupied=1; fi
 
             if [ $still_occupied -eq 1 ]; then
-                 print_error "清理可能未完全成功，请重试或手动检查。"
-                 return 1
+                print_error "清理可能未完全成功，请重试或手动检查。"
+                return 1
             else
                 print_info "清理操作已执行。"
                 return 0
@@ -757,9 +774,9 @@ function start_silent_audio() {
         pkg install termux-api -y
     fi
 
-    print_warn "⚠️  注意：此功能需要手机安装 'Termux:API' APP 才能生效！"
+    print_warn "⚠️ 注意：此功能需要手机安装 'Termux:API' APP 才能生效！"
     print_warn "如果未安装，请前往 F-Droid 下载安装 Termux:API 应用。"
-    
+
     # 检查是否已在播放
     if pgrep -f "termux-media-player" > /dev/null; then
         print_warn "静音音频似乎已在运行。"
@@ -770,7 +787,7 @@ function start_silent_audio() {
 
     print_info "正在检查静音音频文件..."
     SILENT_MP3="$HOME/.silent_audio.mp3"
-    
+
     # 检查文件是否存在且大小是否正常 (之前的坏文件约 243 字节，正常文件通常 > 2KB)
     if [ -f "$SILENT_MP3" ]; then
         local fsize=$(wc -c < "$SILENT_MP3")
@@ -790,11 +807,11 @@ function start_silent_audio() {
             return
         fi
     fi
-    
+
     print_info "正在后台循环播放静音音频..."
     # 后台循环播放
     (while true; do termux-media-player play "$SILENT_MP3" > /dev/null 2>&1; sleep 1; done) &
-    
+
     print_info "已开启！这将强制系统认为 Termux 正在播放媒体，从而防止杀后台。"
     print_warn "注意：这可能会稍微增加耗电量。"
 }
@@ -839,29 +856,29 @@ function keep_alive_menu() {
     while true; do
         clear
         echo -e "${CYAN}====================================================${NC}"
-        echo -e "${BOLD}${PURPLE} 🛡️  防杀后台保活 (Keep Alive) ${NC}"
+        echo -e "${BOLD}${PURPLE}        🛡️ 防杀后台保活 (Keep Alive)              ${NC}"
         echo -e "${CYAN}====================================================${NC}"
         echo -e "${BLUE}说明: 针对 Android 系统杀后台严重的解决方案${NC}"
         echo -e "${YELLOW}注意: 全部方法来自AI，每个人手机不同，无法逐一测试。${NC}"
         echo -e "${CYAN}----------------------------------------------------${NC}"
-        
-        echo -e " ${GREEN}1.${NC} 开启唤醒锁 (Wake Lock)"
-        echo -e "    - 防止手机休眠导致 Termux 停止运行 (推荐)"
-        echo -e " ${GREEN}2.${NC} 释放唤醒锁 (Release Lock)"
-        echo -e "    - 关闭唤醒锁，允许手机正常休眠"
-        echo -e " ${GREEN}3.${NC} 播放静音音频保活 (0dB Audio)"
-        echo -e "    - 欺骗系统正在播放音乐，强力防杀 (无需电脑)"
-        echo -e " ${GREEN}4.${NC} 停止静音音频"
-        echo -e "    - 停止后台播放"
-        echo -e " ${GREEN}5.${NC} 打开电池优化设置"
-        echo -e "    - 手动将 Termux 设置为'不优化'/'无限制'"
-        echo -e " ${GREEN}6.${NC} 其他保活技巧 (无需电脑)"
-        echo -e "    - 任务锁定、悬浮窗、自启动等设置指南"
-        echo -e " ${GREEN}7.${NC} 返回上一级"
-        
+
+        echo -e "  ${GREEN}1.${NC} 开启唤醒锁 (Wake Lock)"
+        echo -e "     - 防止手机休眠导致 Termux 停止运行 (推荐)"
+        echo -e "  ${GREEN}2.${NC} 释放唤醒锁 (Release Lock)"
+        echo -e "     - 关闭唤醒锁，允许手机正常休眠"
+        echo -e "  ${GREEN}3.${NC} 播放静音音频保活 (0dB Audio)"
+        echo -e "     - 欺骗系统正在播放音乐，强力防杀 (无需电脑)"
+        echo -e "  ${GREEN}4.${NC} 停止静音音频"
+        echo -e "     - 停止后台播放"
+        echo -e "  ${GREEN}5.${NC} 打开电池优化设置"
+        echo -e "     - 手动将 Termux 设置为'不优化'/'无限制'"
+        echo -e "  ${GREEN}6.${NC} 其他保活技巧 (无需电脑)"
+        echo -e "     - 任务锁定、悬浮窗、自启动等设置指南"
+        echo -e "  ${GREEN}7.${NC} 返回上一级"
+
         echo -e "${CYAN}====================================================${NC}"
-        read -p " 请输入选项 [1-7]: " choice
-        
+        read -p "  请输入选项 [1-7]: " choice
+
         case $choice in
             1)
                 print_info "正在申请唤醒锁..."
@@ -908,10 +925,10 @@ function start_st() {
         print_error "SillyTavern 未安装，请先安装。"
         return
     fi
-    
+
     # 启动前检查端口
     check_port
-    
+
     cd "$ST_DIR" || exit
 
     if [ ! -d "node_modules" ]; then
@@ -939,7 +956,7 @@ function update_self() {
     # 使用用户提供的 GitHub 仓库
     SCRIPT_NAME="angler_toolbox.sh"
     TARGET_PATH="$HOME/$SCRIPT_NAME"
-    
+
     if curl -s "$SCRIPT_URL" -o "${TARGET_PATH}.tmp"; then
         # 简单检查下载的文件是否有效
         if grep -q "#!/bin/bash" "${TARGET_PATH}.tmp"; then
@@ -970,7 +987,7 @@ function get_abs_path() {
 function ensure_bash_profile() {
     PROFILE="$HOME/.bash_profile"
     BASHRC="$HOME/.bashrc"
-    
+
     # 如果 .bash_profile 不存在，检查 .profile
     if [ ! -f "$PROFILE" ]; then
         if [ -f "$HOME/.profile" ]; then
@@ -986,7 +1003,7 @@ EOF
             return
         fi
     fi
-    
+
     # 检查 PROFILE 是否加载了 .bashrc
     if ! grep -q ".bashrc" "$PROFILE"; then
         cat << 'EOF' >> "$PROFILE"
@@ -1004,7 +1021,7 @@ EOF
 function install_script() {
     SCRIPT_NAME="angler_toolbox.sh"
     SCRIPT_PATH="$HOME/$SCRIPT_NAME"
-    
+
     # 尝试获取当前脚本的绝对路径
     CURRENT_PATH=""
     if [ -f "$0" ]; then
@@ -1016,17 +1033,17 @@ function install_script() {
     if [ "$CURRENT_PATH" != "$SCRIPT_PATH" ]; then
         # 如果当前脚本文件存在（本地运行），则复制
         if [ -f "$CURRENT_PATH" ]; then
-             print_info "正在安装/更新脚本到 $SCRIPT_PATH ..."
-             cp "$CURRENT_PATH" "$SCRIPT_PATH"
-             chmod +x "$SCRIPT_PATH"
+            print_info "正在安装/更新脚本到 $SCRIPT_PATH ..."
+            cp "$CURRENT_PATH" "$SCRIPT_PATH"
+            chmod +x "$SCRIPT_PATH"
         # 如果当前是管道运行 (curl | bash)，且目标不存在，则下载
         elif [ ! -f "$SCRIPT_PATH" ]; then
-             print_info "正在下载脚本到 $SCRIPT_PATH ..."
-             if curl -s "$SCRIPT_URL" -o "$SCRIPT_PATH"; then
-                 chmod +x "$SCRIPT_PATH"
-             else
-                 print_error "下载失败，无法安装脚本。"
-             fi
+            print_info "正在下载脚本到 $SCRIPT_PATH ..."
+            if curl -s "$SCRIPT_URL" -o "$SCRIPT_PATH"; then
+                chmod +x "$SCRIPT_PATH"
+            else
+                print_error "下载失败，无法安装脚本。"
+            fi
         fi
     fi
 }
@@ -1037,7 +1054,7 @@ function enable_autostart() {
     disable_autostart
 
     install_script
-    
+
     # 确保 Bash 环境下 .bash_profile 加载 .bashrc
     # Termux 默认是 Login Shell，只读取 .bash_profile / .profile
     ensure_bash_profile
@@ -1056,7 +1073,7 @@ function enable_autostart() {
     for RC_FILE in "${CONFIG_FILES[@]}"; do
         # 确保文件存在
         touch "$RC_FILE"
-        
+
         if grep -q "$START_MARKER" "$RC_FILE" 2>/dev/null; then
             print_info "自动启动已在 $RC_FILE 中开启。"
             continue
@@ -1082,20 +1099,20 @@ EOF
 function disable_autostart() {
     START_MARKER="# BEGIN ANGLER_TOOLBOX_AUTOSTART"
     END_MARKER="# END ANGLER_TOOLBOX_AUTOSTART"
-    
+
     CONFIG_FILES=("$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zprofile" "$HOME/.bash_login")
 
     for RC_FILE in "${CONFIG_FILES[@]}"; do
         if [ -f "$RC_FILE" ]; then
             local modified=0
-            
+
             # 1. 删除标记块
             if grep -q "$START_MARKER" "$RC_FILE" 2>/dev/null; then
                 sed -i "/$START_MARKER/,/$END_MARKER/d" "$RC_FILE"
                 print_info "已从 $RC_FILE 中移除标准自启配置。"
                 modified=1
             fi
-            
+
             # 2. 清理残留的旧版启动命令 (防止重复/双重启动)
             # 查找包含 angler_toolbox.sh 的行，且不是注释行(虽然 sed 会删掉整行)
             if grep -q "angler_toolbox.sh" "$RC_FILE" 2>/dev/null; then
@@ -1106,7 +1123,7 @@ function disable_autostart() {
                 print_warn "已清理 $RC_FILE 中的残留启动命令 (已备份)。"
                 modified=1
             fi
-            
+
             if [ $modified -eq 0 ]; then
                 print_info "$RC_FILE 中未发现自启配置。"
             fi
@@ -1118,11 +1135,11 @@ function disable_autostart() {
 function toggle_autostart() {
     START_MARKER="# BEGIN ANGLER_TOOLBOX_AUTOSTART"
     IS_ENABLED=0
-    
+
     # 检查是否在任意文件中开启
     if grep -q "$START_MARKER" "$HOME/.bashrc" 2>/dev/null; then IS_ENABLED=1; fi
     if [ -f "$HOME/.zshrc" ] && grep -q "$START_MARKER" "$HOME/.zshrc" 2>/dev/null; then IS_ENABLED=1; fi
-    
+
     if [ $IS_ENABLED -eq 1 ]; then
         disable_autostart
     else
@@ -1144,7 +1161,7 @@ function safe_verify() {
     local rand_num=$((RANDOM % 9000 + 1000))
     print_warn "二次验证：请输入随机数字 [ $rand_num ] 以确认删除："
     read -p "请输入: " input_num
-    
+
     if [[ "$input_num" == "$rand_num" ]]; then
         return 0
     else
@@ -1181,7 +1198,7 @@ function uninstall_st_dir() {
         print_error "SillyTavern 未安装。"
         return
     fi
-    
+
     if safe_verify "卸载 SillyTavern"; then
         do_uninstall_st
     fi
@@ -1209,7 +1226,7 @@ function uninstall_menu() {
     echo "3. 卸载全部"
     echo "4. 返回上一级"
     read -p "请选择操作 [1-4]: " choice
-    
+
     case $choice in
         1) uninstall_st_dir ;;
         2) uninstall_script ;;
@@ -1247,43 +1264,43 @@ function main_menu() {
 
         # 使用简单的 ASCII 艺术字，避免特殊字符导致的乱码
         echo -e "${CYAN}"
-        echo "    _                _           "
-        echo "   / \   _ __   __ _| | ___ _ __ "
+        echo "    _    _   "
+        echo "   / \  _ __ ___  | | ___  _ __  "
         echo "  / _ \ | '_ \ / _\` | |/ _ \ '__|"
         echo " / ___ \| | | | (_| | |  __/ |   "
         echo "/_/   \_\_| |_|\__, |_|\___|_|   "
-        echo "               |___/             "
+        echo "               |___/            "
         echo -e "${NC}"
 
         echo -e "${CYAN}====================================================${NC}"
-        echo -e "${BOLD}${PURPLE} 🎣 钓鱼佬的工具箱 (Angler's Toolbox) ${NC} ${YELLOW}${SCRIPT_VERSION}${NC}"
+        echo -e "${BOLD}${PURPLE}     🎣 钓鱼佬的工具箱 (Angler's Toolbox)     ${NC} ${YELLOW}${SCRIPT_VERSION}${NC}"
         echo -e "${CYAN}====================================================${NC}"
-        echo -e "${BLUE} 作者: 10091009mc${NC}"
-        echo -e "${BLUE} Foxium 工具箱 作者: FoX | 𝓚𝓚𝓣𝓼𝓝(橘狐)${NC}"
-        echo -e "${RED} ⚠️  警告: 不要买任何贩子的模型API，都是骗人的！${NC}"
-        echo -e "${RED} ⚠️  声明: 本脚本完全免费，禁止商业化使用！${NC}"
+        echo -e "${BLUE}  作者: 10091009mc${NC}"
+        echo -e "${BLUE}  Foxium 工具箱 作者: FoX | 𝓚𝓚𝓣𝓼𝓝(橘狐)${NC}"
+        echo -e "${RED}  ⚠️ 警告: 不要买任何贩子的模型API，都是骗人的！${NC}"
+        echo -e "${RED}  ⚠️ 声明: 本脚本完全免费，禁止商业化使用！${NC}"
         echo -e "${CYAN}----------------------------------------------------${NC}"
-        
+
         echo -e "${BOLD}${BLUE}【 🚀 核心功能 】${NC}"
-        echo -e " ${GREEN}1.${NC} 启动 SillyTavern       ${GREEN}2.${NC} 安装 SillyTavern"
-        echo -e " ${GREEN}3.${NC} 更新 SillyTavern       ${GREEN}4.${NC} 版本回退/切换"
-        
-        echo -e "\n${BOLD}${BLUE}【 🛠️  维护与修复 】${NC}"
-        echo -e " ${GREEN}5.${NC} 重装依赖 (Fix npm)     ${GREEN}6.${NC} 备份与恢复"
-        echo -e " ${GREEN}7.${NC} 端口检查与清理"
-        
-        echo -e "\n${BOLD}${BLUE}【 ⚙️  工具箱设置 】${NC}"
-        echo -e " ${GREEN}8.${NC} 防杀后台保活         ${GREEN}9.${NC} 更新此脚本"
-        echo -e " ${GREEN}10.${NC} 开机自启 [${AUTOSTART_STATUS}]    ${GREEN}11.${NC} 卸载管理"
-        echo -e " ${GREEN}12.${NC} 运行 Foxium 工具箱  ${GREEN}13.${NC} 一键修复 hostWhitelist (安全)"
-        
+        echo -e "  ${GREEN}1.${NC} 启动 SillyTavern          ${GREEN}2.${NC} 安装 SillyTavern"
+        echo -e "  ${GREEN}3.${NC} 更新 SillyTavern          ${GREEN}4.${NC} 版本回退/切换"
+
+        echo -e "\n${BOLD}${BLUE}【 🛠️ 维护与修复 】${NC}"
+        echo -e "  ${GREEN}5.${NC} 重装依赖 (Fix npm)        ${GREEN}6.${NC} 备份与恢复"
+        echo -e "  ${GREEN}7.${NC} 端口检查与清理"
+
+        echo -e "\n${BOLD}${BLUE}【 ⚙️ 工具箱设置 】${NC}"
+        echo -e "  ${GREEN}8.${NC} 防杀后台保活              ${GREEN}9.${NC} 更新此脚本"
+        echo -e "  ${GREEN}10.${NC} 开机自启 [${AUTOSTART_STATUS}]        ${GREEN}11.${NC} 卸载管理"
+        echo -e "  ${GREEN}12.${NC} 运行 Foxium 工具箱        ${GREEN}13.${NC} 一键修复 hostWhitelist (安全)"
+
         echo -e "\n${CYAN}----------------------------------------------------${NC}"
         echo -e "${YELLOW}提示: 若遇到脚本需退出两次才能关闭，请尝试先关闭再重新开启[开机自启]功能。${NC}"
-        echo -e " ${GREEN}0.${NC} 退出脚本"
+        echo -e "  ${GREEN}0.${NC} 退出脚本"
         echo -e "${CYAN}====================================================${NC}"
-        
-        read -p " 请输入选项 [0-13]: " option
-        
+
+        read -p "  请输入选项 [0-13]: " option
+
         case $option in
             1) start_st; read -p "按回车键继续..." ;;
             2) install_st; read -p "按回车键继续..." ;;
@@ -1310,7 +1327,7 @@ function check_first_run_autostart() {
     IS_ENABLED=0
     if grep -q "$START_MARKER" "$HOME/.bashrc" 2>/dev/null; then IS_ENABLED=1; fi
     if [ -f "$HOME/.zshrc" ] && grep -q "$START_MARKER" "$HOME/.zshrc" 2>/dev/null; then IS_ENABLED=1; fi
-    
+
     # 检查是否存在重复配置 (导致需要退出两次的问题)
     # 统计所有配置文件中出现的次数
     local total_count=0
@@ -1355,13 +1372,13 @@ function check_first_run_autostart() {
 if [[ "$1" != "--skip-init" ]]; then
     init_environment
     install_script
-    
+
     # 确保 .bash_profile 配置正确 (如果已开启自启)
     START_MARKER="# BEGIN ANGLER_TOOLBOX_AUTOSTART"
     if grep -q "$START_MARKER" "$HOME/.bashrc" 2>/dev/null; then
         ensure_bash_profile
     fi
-    
+
     check_first_run_autostart
 fi
 main_menu
