@@ -31,7 +31,8 @@
 2. 打开 Termux，复制并执行：
 
    ```bash
-   bash <(curl -s https://raw.githubusercontent.com/mc10091009/st_manager.sh/main/angler_toolbox.sh)
+   bash <(curl -s https://raw.githubusercontent.com/weiranxinyu/st_manager.sh/main/angler_toolbox.sh)
+
    ```
 
 3. 首次运行脚本会自动：
